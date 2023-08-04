@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 type Category int
@@ -79,6 +81,7 @@ type KlineData struct {
 	Close     float64
 	BuyVol    float64
 	SellVol   float64
+	Turnover  decimal.Decimal
 }
 
 func (k *KlineData) Update(trade Trade) {
@@ -102,6 +105,7 @@ func (k *KlineData) Update(trade Trade) {
 		buyVol = trade.Vol
 	}
 	k.TimeStamp = trade.TimeStamp
+	k.Turnover = k.Turnover.Add(decimal.NewFromFloat(trade.Price).Mul(decimal.NewFromFloat(trade.Vol)))
 	k.BuyVol += buyVol
 	k.SellVol += sellVol
 }
@@ -258,6 +262,15 @@ func (k *Kline) Save() {
 	name5 := path.Join(kpath, "sellvol/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_SellVol.csv")
 	WriteToFile(name5, *k, func(kline KlineData) string {
 		return strconv.FormatFloat(kline.SellVol, 'f', -1, 64)
+	})
+
+	name6 := path.Join(kpath, "turnover/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_TurnOver.csv")
+	WriteToFile(name6, *k, func(kline KlineData) string {
+		turnOver, _ := kline.Turnover.Float64()
+		// if !ok {
+		// 	log.Fatalf("%+v convert float failed\n", kline.Turnover)
+		// }
+		return strconv.FormatFloat(turnOver, 'f', 2, 64)
 	})
 }
 
