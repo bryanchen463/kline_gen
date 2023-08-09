@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path"
 	"strconv"
@@ -32,8 +33,7 @@ const (
 )
 
 const (
-	AggTradeBaseDir = `C:\Users\dell\AppData\Roaming\MobaXterm\slash\RemoteFiles\66940_3_0`
-	DateLayout      = "2006-01-02"
+	DateLayout = "2006-01-02"
 )
 
 func checkErr(err error) {
@@ -44,8 +44,8 @@ func checkErr(err error) {
 
 type Trade struct {
 	TradeId   uint64
-	Price     float64
-	Vol       float64
+	Price     decimal.Decimal
+	Vol       decimal.Decimal
 	TimeStamp uint64
 	IsSell    bool
 }
@@ -64,8 +64,8 @@ func parseTrade(content string) Trade {
 	checkErr(err)
 	trade := Trade{
 		TradeId:   tradeId,
-		Price:     prices,
-		Vol:       vol,
+		Price:     decimal.NewFromFloat(prices),
+		Vol:       decimal.NewFromFloat(vol),
 		TimeStamp: tradeTime / 1000,
 		IsSell:    isSell,
 	}
@@ -75,39 +75,49 @@ func parseTrade(content string) Trade {
 type KlineData struct {
 	Symbol    string
 	TimeStamp uint64
-	Open      float64
-	High      float64
-	Low       float64
-	Close     float64
-	BuyVol    float64
-	SellVol   float64
+	Open      decimal.Decimal
+	High      decimal.Decimal
+	Low       decimal.Decimal
+	Close     decimal.Decimal
+	Price     decimal.Decimal
+	BuyVol    decimal.Decimal
+	SellVol   decimal.Decimal
 	Turnover  decimal.Decimal
 }
 
 func (k *KlineData) Update(trade Trade) {
+	price := trade.Price
 	if k.TimeStamp == 0 {
-		k.High = trade.Price
-		k.Low = trade.Price
-		k.Open = trade.Price
+		k.High = price
+		k.Low = price
+		k.Open = price
 	} else {
-		if k.High < trade.Price {
-			k.High = trade.Price
+		if k.High.LessThan(price) {
+			k.High = price
 		}
-		if k.Low > trade.Price {
-			k.Low = trade.Price
+		if price.LessThan(k.Low) {
+			k.Low = price
 		}
 	}
-	k.Close = trade.Price
+	k.Close = price
 	buyVol, sellVol := 0.0, 0.0
 	if trade.IsSell {
-		sellVol = trade.Vol
+		sellVol = trade.Vol.InexactFloat64()
 	} else {
-		buyVol = trade.Vol
+		buyVol = trade.Vol.InexactFloat64()
 	}
 	k.TimeStamp = trade.TimeStamp
-	k.Turnover = k.Turnover.Add(decimal.NewFromFloat(trade.Price).Mul(decimal.NewFromFloat(trade.Vol)))
-	k.BuyVol += buyVol
-	k.SellVol += sellVol
+	k.Turnover = trade.Price.Mul(trade.Vol)
+	k.BuyVol = k.BuyVol.Add(decimal.NewFromFloat(buyVol))
+	k.SellVol = k.BuyVol.Add(decimal.NewFromFloat(sellVol))
+	k.Price = trade.Price
+}
+
+func (k *KlineData) Record() []string {
+	ts := fmt.Sprintf("%d", k.TimeStamp)
+	return []string{
+		ts, k.Open.String(), k.High.String(), k.Low.String(), k.Close.String(), k.BuyVol.String(), k.SellVol.String(), k.Turnover.String(),
+	}
 }
 
 type KlineDatas struct {
@@ -117,14 +127,41 @@ type KlineDatas struct {
 	Symbol string
 }
 
+func (k *KlineDatas) FixHighAndLow() {
+	dotmap := make(map[int]int)
+	for _, data := range k.Datas {
+		dotmap[data.Price.NumDigits()]++
+	}
+	maxDig := 0
+	freqDig := 0
+	freqCount := 0
+	for dig, count := range dotmap {
+		if maxDig < dig {
+			maxDig = dig
+		}
+		if count > freqCount {
+			freqCount = count
+			freqDig = dig
+		}
+	}
+	if maxDig != freqDig {
+		log.Printf("digit err %d != %d", maxDig, freqDig)
+	}
+	minTick := decimal.NewFromFloat(math.Pow(10, float64(freqDig)))
+	for _, data := range k.Datas {
+		data.High.Sub(minTick)
+		data.Low.Add(minTick)
+	}
+}
+
 func (k *KlineDatas) getPrevDayKlineData() KlineData {
 	prevDay := k.Date.Add(-24 * time.Hour)
 
 	filename := fmt.Sprintf("%s-aggTrades-%s.zip", k.Symbol, prevDay.Format(DateLayout))
 	if k.Type == SPOT {
-		filename = path.Join(AggTradeBaseDir, "spot", prevDay.Format(DateLayout), filename)
+		filename = path.Join(*aggTradeDir, "spot", prevDay.Format(DateLayout), filename)
 	} else if k.Type == Future {
-		filename = path.Join(AggTradeBaseDir, "um", prevDay.Format(DateLayout), filename)
+		filename = path.Join(*aggTradeDir, "um", prevDay.Format(DateLayout), filename)
 	}
 
 	zipFile, err := zip.OpenReader(filename)
@@ -151,13 +188,14 @@ func (k *KlineDatas) getPrevDayKlineData() KlineData {
 			content = scanner.Text()
 		}
 		trade := parseTrade(content)
+		price := trade.Price
 		klineData = KlineData{
 			Symbol:    k.Symbol,
 			TimeStamp: trade.TimeStamp,
-			Open:      trade.Price,
-			Close:     trade.Price,
-			High:      trade.Price,
-			Low:       trade.Price,
+			Open:      price,
+			Close:     price,
+			High:      price,
+			Low:       price,
 		}
 	} else {
 		log.Fatal("unexpect zip file count")
@@ -166,7 +204,7 @@ func (k *KlineDatas) getPrevDayKlineData() KlineData {
 }
 
 func (k *KlineDatas) getPrevData(minutes int) (KlineData, int) {
-	for i := minutes; i >= 0; i-- {
+	for i := minutes - 1; i >= 0; i-- {
 		if k.Datas[i].TimeStamp != 0 {
 			return k.Datas[i], i
 		}
@@ -187,7 +225,9 @@ func (k *KlineDatas) AddTrade(trade Trade) {
 	klineData := k.Datas[minutes]
 	klineData.Update(trade)
 	k.Datas[minutes] = klineData
-	k.fillPrevData(minutes)
+	if minutes > 0 {
+		k.fillPrevData(minutes)
+	}
 }
 
 type Kline struct {
@@ -228,50 +268,49 @@ func (k *Kline) Save() {
 
 	if config.Type == SPOT {
 
-		kpath = "spotkdata/"
+		kpath = path.Join(*dir, "spotkdata/")
 	} else {
 
-		kpath = "kdata/"
+		kpath = path.Join(*dir, "kdata/")
 	}
 
 	name := path.Join(kpath, "open/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_Open.csv")
 	WriteToFile(name, *k, func(kline KlineData) string {
-		return strconv.FormatFloat(kline.Open, 'f', -1, 64)
+		return strconv.FormatFloat(kline.Open.InexactFloat64(), 'f', -1, 64)
 	})
 
 	name1 := path.Join(kpath, "high/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_High.csv")
 	WriteToFile(name1, *k, func(kline KlineData) string {
-		return strconv.FormatFloat(kline.High, 'f', -1, 64)
+		return strconv.FormatFloat(kline.High.InexactFloat64(), 'f', -1, 64)
 	})
 
 	name2 := path.Join(kpath, "low/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_Low.csv")
 	WriteToFile(name2, *k, func(kline KlineData) string {
-		return strconv.FormatFloat(kline.Low, 'f', -1, 64)
+		return strconv.FormatFloat(kline.Low.InexactFloat64(), 'f', -1, 64)
 	})
 
 	name3 := path.Join(kpath, "close/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_Close.csv")
 	WriteToFile(name3, *k, func(kline KlineData) string {
-		return strconv.FormatFloat(kline.Close, 'f', -1, 64)
+		return strconv.FormatFloat(kline.Close.InexactFloat64(), 'f', -1, 64)
 	})
 
 	name4 := path.Join(kpath, "buyvol/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_BuyVol.csv")
 	WriteToFile(name4, *k, func(kline KlineData) string {
-		return strconv.FormatFloat(kline.BuyVol, 'f', -1, 64)
+		return strconv.FormatFloat(kline.BuyVol.InexactFloat64(), 'f', -1, 64)
 	})
 
 	name5 := path.Join(kpath, "sellvol/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_SellVol.csv")
 	WriteToFile(name5, *k, func(kline KlineData) string {
-		return strconv.FormatFloat(kline.SellVol, 'f', -1, 64)
+		return strconv.FormatFloat(kline.SellVol.InexactFloat64(), 'f', -1, 64)
 	})
 
 	name6 := path.Join(kpath, "turnover/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_TurnOver.csv")
 	WriteToFile(name6, *k, func(kline KlineData) string {
 		turnOver, _ := kline.Turnover.Float64()
-		// if !ok {
-		// 	log.Fatalf("%+v convert float failed\n", kline.Turnover)
-		// }
 		return strconv.FormatFloat(turnOver, 'f', 2, 64)
 	})
+
+	writeKlineToFile(kpath, *k)
 }
 
 func WriteToFile(filename string, data Kline, valueFunc func(KlineData) string) {
@@ -296,12 +335,34 @@ func WriteToFile(filename string, data Kline, valueFunc func(KlineData) string) 
 	writer.Write(append([]string{"Timestamp"}, symbols...))
 
 	fmt.Println("长度为=", len(data.SymbolData))
-	for i, v := range data.SymbolData[symbols[0]].Datas {
+	for i := range data.SymbolData[symbols[0]].Datas {
 		row := make([]string, len(symbols)+1)
-		row[0] = strconv.FormatFloat(float64(v.TimeStamp), 'f', 0, 64)
+		row[0] = strconv.FormatFloat(float64(data.Date.UnixMilli()+int64(i*60000)), 'f', 0, 64)
 		for j, symbol := range symbols {
 			row[j+1] = valueFunc(data.SymbolData[symbol].Datas[i])
 		}
 		writer.Write(row)
+	}
+}
+
+func writeKlineToFile(baseDir string, data Kline) {
+	dir := path.Dir(baseDir)
+	os.MkdirAll(dir, os.ModeDir)
+
+	for symbol, kline := range data.SymbolData {
+		filename := path.Join(baseDir, kline.Date.Format(DateLayout), symbol+"_"+config.Type.string()+".csv")
+		os.MkdirAll(path.Dir(filename), os.ModeDir)
+		file, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModeAppend)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		defer file.Close()
+		writer := csv.NewWriter(file)
+		defer writer.Flush()
+		writer.Write([]string{"timestamp", "open", "high", "low", "close", "buyvol", "sellvol", "turnover"})
+		for _, k := range kline.Datas {
+			writer.Write(k.Record())
+		}
 	}
 }

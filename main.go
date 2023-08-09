@@ -8,20 +8,21 @@ import (
 	"os"
 	"path"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v2"
 )
 
-var date = flag.String("date", time.Now().Format(DateLayout), "which day's kline date to generator")
+var date = flag.String("date", "2023-07-01", "which day's kline date to generator")
+var dir = flag.String("dir", "/share", "save direction")
+var aggTradeDir = flag.String("aggTradeBaseDir", "/share/agg_database", "agg trade diretion")
 var kline *Kline
 
 func parseZipFile(filename string) {
 	var fullPath string
 	if config.Type == SPOT {
-		fullPath = path.Join(AggTradeBaseDir, "spot", *date, filename)
+		fullPath = path.Join(*aggTradeDir, "spot", *date, filename)
 	} else if config.Type == Future {
-		fullPath = path.Join(AggTradeBaseDir, "um", *date, filename)
+		fullPath = path.Join(*aggTradeDir, "um", *date, filename)
 	}
 
 	zipFile, err := zip.OpenReader(fullPath)
@@ -56,15 +57,15 @@ func parseZipFile(filename string) {
 }
 
 func run() {
-	var aggTradeDir string
+	var aggDir string
 	if config.Type == SPOT {
-		aggTradeDir = path.Join(AggTradeBaseDir, "spot", *date)
+		aggDir = path.Join(*aggTradeDir, "spot", *date)
 	} else if config.Type == Future {
-		aggTradeDir = path.Join(AggTradeBaseDir, "um", *date)
+		aggDir = path.Join(*aggTradeDir, "um", *date)
 	}
 
-	log.Println(aggTradeDir)
-	files, err := os.ReadDir(strings.Replace(aggTradeDir, "/", "\\", -1))
+	log.Println(aggDir)
+	files, err := os.ReadDir(aggDir)
 	if err != nil {
 		log.Fatal(err)
 	}
