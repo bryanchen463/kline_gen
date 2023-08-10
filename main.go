@@ -8,20 +8,19 @@ import (
 	"os"
 	"path"
 	"strings"
-
-	"gopkg.in/yaml.v2"
+	"sync"
+	"time"
 )
 
-var date = flag.String("date", "2023-07-01", "which day's kline date to generator")
+var date = flag.String("date", time.Now().Format(DateLayout), "which day's kline date to generator")
 var dir = flag.String("dir", "/share", "save direction")
-var aggTradeDir = flag.String("aggTradeBaseDir", "/share/agg_database", "agg trade diretion")
-var kline *Kline
+var aggTradeDir = flag.String("aggTradeBaseDir", "/share/agg_database/bn", "agg trade diretion")
 
-func parseZipFile(filename string) {
+func parseZipFile(filename string, kline *Kline) {
 	var fullPath string
-	if config.Type == SPOT {
+	if kline.Type == SPOT {
 		fullPath = path.Join(*aggTradeDir, "spot", *date, filename)
-	} else if config.Type == Future {
+	} else if kline.Type == Future {
 		fullPath = path.Join(*aggTradeDir, "um", *date, filename)
 	}
 
@@ -56,11 +55,11 @@ func parseZipFile(filename string) {
 	}
 }
 
-func run() {
+func run(kline Kline) {
 	var aggDir string
-	if config.Type == SPOT {
+	if kline.Type == SPOT {
 		aggDir = path.Join(*aggTradeDir, "spot", *date)
-	} else if config.Type == Future {
+	} else if kline.Type == Future {
 		aggDir = path.Join(*aggTradeDir, "um", *date)
 	}
 
@@ -71,27 +70,26 @@ func run() {
 	}
 	for _, file := range files {
 		if !file.IsDir() {
-			parseZipFile(file.Name())
+			parseZipFile(file.Name(), &kline)
 		}
 	}
 	kline.Save()
 }
 
-func parseConfig() {
-	file, err := os.ReadFile("config.yaml")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = yaml.Unmarshal(file, &config)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
 func main() {
 	flag.Parse()
-	parseConfig()
-	kline = NewKline(*date)
-	run()
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		kline := NewKline(*date, SPOT)
+		run(*kline)
+		wg.Done()
+	}()
+	wg.Add(1)
+	go func() {
+		kline := NewKline(*date, Future)
+		run(*kline)
+		wg.Done()
+	}()
+	wg.Wait()
 }

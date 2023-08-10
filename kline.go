@@ -233,13 +233,15 @@ func (k *KlineDatas) AddTrade(trade Trade) {
 type Kline struct {
 	SymbolData map[string]KlineDatas
 	Date       time.Time
+	Type       Category
 }
 
-func NewKline(dt string) *Kline {
+func NewKline(dt string, t Category) *Kline {
 	d, _ := time.Parse(DateLayout, dt)
 	return &Kline{
 		SymbolData: make(map[string]KlineDatas),
 		Date:       d,
+		Type:       t,
 	}
 }
 
@@ -248,7 +250,7 @@ func (k *Kline) AddTrade(symbol string, trade Trade) {
 	if !ok {
 		tradeTime := time.Unix(int64(trade.TimeStamp), 0)
 		klineDatas = KlineDatas{
-			Type:   config.Type,
+			Type:   k.Type,
 			Date:   time.Date(tradeTime.Year(), tradeTime.Month(), tradeTime.Day(), 8, 0, 0, 0, time.Local),
 			Symbol: symbol,
 		}
@@ -266,45 +268,44 @@ func (k *Kline) FillData() {
 func (k *Kline) Save() {
 	var kpath string
 
-	if config.Type == SPOT {
+	if k.Type == SPOT {
 
-		kpath = path.Join(*dir, "spotkdata/")
+		kpath = path.Join(*dir, "klineTrade", "spotkdata")
 	} else {
-
-		kpath = path.Join(*dir, "kdata/")
+		kpath = path.Join(*dir, "klineTrade", "kdata")
 	}
 
-	name := path.Join(kpath, "open/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_Open.csv")
+	name := path.Join(kpath, "open/"+k.Date.Format(DateLayout)+"_"+k.Type.string()+"_Open.csv")
 	WriteToFile(name, *k, func(kline KlineData) string {
 		return strconv.FormatFloat(kline.Open.InexactFloat64(), 'f', -1, 64)
 	})
 
-	name1 := path.Join(kpath, "high/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_High.csv")
+	name1 := path.Join(kpath, "high/"+k.Date.Format(DateLayout)+"_"+k.Type.string()+"_High.csv")
 	WriteToFile(name1, *k, func(kline KlineData) string {
 		return strconv.FormatFloat(kline.High.InexactFloat64(), 'f', -1, 64)
 	})
 
-	name2 := path.Join(kpath, "low/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_Low.csv")
+	name2 := path.Join(kpath, "low/"+k.Date.Format(DateLayout)+"_"+k.Type.string()+"_Low.csv")
 	WriteToFile(name2, *k, func(kline KlineData) string {
 		return strconv.FormatFloat(kline.Low.InexactFloat64(), 'f', -1, 64)
 	})
 
-	name3 := path.Join(kpath, "close/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_Close.csv")
+	name3 := path.Join(kpath, "close/"+k.Date.Format(DateLayout)+"_"+k.Type.string()+"_Close.csv")
 	WriteToFile(name3, *k, func(kline KlineData) string {
 		return strconv.FormatFloat(kline.Close.InexactFloat64(), 'f', -1, 64)
 	})
 
-	name4 := path.Join(kpath, "buyvol/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_BuyVol.csv")
+	name4 := path.Join(kpath, "buyvol/"+k.Date.Format(DateLayout)+"_"+k.Type.string()+"_BuyVol.csv")
 	WriteToFile(name4, *k, func(kline KlineData) string {
 		return strconv.FormatFloat(kline.BuyVol.InexactFloat64(), 'f', -1, 64)
 	})
 
-	name5 := path.Join(kpath, "sellvol/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_SellVol.csv")
+	name5 := path.Join(kpath, "sellvol/"+k.Date.Format(DateLayout)+"_"+k.Type.string()+"_SellVol.csv")
 	WriteToFile(name5, *k, func(kline KlineData) string {
 		return strconv.FormatFloat(kline.SellVol.InexactFloat64(), 'f', -1, 64)
 	})
 
-	name6 := path.Join(kpath, "turnover/"+k.Date.Format(DateLayout)+"_"+config.Type.string()+"_TurnOver.csv")
+	name6 := path.Join(kpath, "turnover/"+k.Date.Format(DateLayout)+"_"+k.Type.string()+"_TurnOver.csv")
 	WriteToFile(name6, *k, func(kline KlineData) string {
 		turnOver, _ := kline.Turnover.Float64()
 		return strconv.FormatFloat(turnOver, 'f', 2, 64)
@@ -350,7 +351,7 @@ func writeKlineToFile(baseDir string, data Kline) {
 	os.MkdirAll(dir, os.ModeDir)
 
 	for symbol, kline := range data.SymbolData {
-		filename := path.Join(baseDir, kline.Date.Format(DateLayout), symbol+"_"+config.Type.string()+".csv")
+		filename := path.Join(baseDir, kline.Date.Format(DateLayout), symbol+"_"+data.Type.string()+".csv")
 		os.MkdirAll(path.Dir(filename), os.ModeDir)
 		file, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.ModeAppend)
 		if err != nil {
